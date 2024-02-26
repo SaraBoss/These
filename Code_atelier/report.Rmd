@@ -1,0 +1,1011 @@
+---
+title: "Stratégie de pilotage et résultats"
+output: pdf_document
+geometry: margin=0.75in
+
+---
+\vspace{-15truemm}
+
+
+```{r,echo=FALSE}
+#Importation des fonctions utilisées dans les modèles 
+
+source("D://home/Sara/Modelo/2-Herbe/Code/5-Modele_general/Actual/2023_02_14_fonctions_Rshinyv3.R")
+
+
+#pour le modèle ravageurs
+source_python('D://home/Sara/Modelo/0-Ateliers_codes/Newactual/Rshiny_codev2.py')
+
+#pour le modèle de gestion temps de travail
+source("D://home/Sara/Modelo/3-Modeles_temps_argent/Codes/Actuels/2023_02_21_modele_tempsv1.R")
+#pour le modèle de valorisation économique
+source("D://home/Sara/Modelo/3-Modeles_temps_argent/Codes/Actuels/2023_02_21_modele_argentv1.R")
+
+
+
+
+###PARAMETRES 
+
+
+#pour la croissance de l'herbes
+parametres_herbe<-c(8.405530e-03,1.343684e-03,8.049574e-02,1.124394e-02,3.502689e+01,2.821328,8.090064e+01,2.378807e+01,8.195681e+01,242.00,3.206591e+02,1.473158e-04,-6.125339e-04,4.095693)
+inc_value=5
+cutoff=50
+h0=15
+
+
+SNini=15
+```
+
+## Définition de la stratégie `r input$n_strategie` du groupe `r input$n_groupe` : 
+
+### Tableaux de présence des poules dans le verger : 
+```{r,echo=FALSE,comment=NA}
+# On récupère toutes les informations saisies dans le Rshiny : 
+
+D1=data.frame(tabledit1$data)
+names(D1)<-c("Novembre",rep("",4),"Décembre",rep("",3),"Janvier",rep("",4),"Février",rep("",3))
+D1
+
+D2=data.frame(tabledit2$data)
+names(D2)<-c("Mars",rep("",3),"Avril",rep("",3),"Mai",rep("",4),"Juin",rep("",3))
+D2
+
+D3=data.frame(tabledit3$data)
+names(D3)<-c("Juillet",rep("",3),"Août",rep("",4),"Septembre",rep("",3),"Octobre",rep("",3))
+D3
+
+
+dates_abattages=c(input$dabattage1,input$dabattage2,input$dabattage3)
+index=case_when(input$n_abattages==1~1,input$n_abattages==2~2,input$n_abattages==3~3)
+if (input$n_abattages==0){index=0}
+```
+
+### Abattages  
+Nombre d'abattages : `r input$n_abattages` aux dates : `r if (input$n_abattages==0){dates_abattages[0]}else{dates_abattages[1:index]}`  
+
+
+### Fauches  
+Dates de fauche : `r input$d_fauche`
+
+### Traitements carpocapse  
+Dates de traitements carpocapse :  
+`r input$d_treat`
+
+### Définition du système d'élevage  
+Type de poulailler : `r input$poulailler`  
+Stratégie de localisation du poulailler : `r input$strat_loc`  
+Stratégie d'alimentation : `r input$strat_alim`  
+Fréquence de déplacement : toutes les `r input$freq_deplact` semaines  
+Complémentation en lumière : `r case_when(input$lum==TRUE~"Oui",input$lum==FALSE~"Non")`  
+
+### Définition du système de commercialisation :   
+Système de commercialisation des fruits : `r input$systeme_comm_fruits`  
+Système de commercialisation des oeufs : `r input$systeme_comm_oeufs`  
+Système de commercialisation supplémentaire : `r if (input$comm_sup==1|input$systeme_comm_oeufs=="Non intégré"){input$systeme_comm_supp}`  
+
+
+
+### Embauche de main d'oeuvre :  
+Embauche de `r input$ETP` ETP du `r input$dates_embauche[[1]]` au `r input$dates_embauche[[2]]`
+
+
+
+
+```{r,echo=FALSE}
+
+#Fonctions intermédiaires pour transformer les données
+
+  ##################   TABLEAU DE DONNEES POULES   ####################################
+##transformation du tableau de données poules en un format compatible avec le reste
+tab_trans<-function(tabledit1,tabledit2,tabledit3){
+     tabletot<-data.frame(t(cbind(tabledit1,tabledit2,tabledit3)))
+     names(tabletot)<-c("Semaine","Nombre")
+     #on construit un tableau à trois colonne avec le numéro de semaine, le nombre de poules sur la parcelle et le premier jour de la semaine
+     tabletot2<-data.frame(tabletot,"Firstday"=as.Date(first_days_week))
+     #on crée le tableau avec les séquences de date
+     
+     tablefin=c()
+     for (j in (1:length(tabletot2$Nombre))){
+       seqdate=seq(as.Date(tabletot2$Firstday[j]),as.Date(tabletot2$Firstday[j])+6,by="days")
+       seqnombre=rep(tabletot2$Nombre[j],7)
+       df_inter=data.frame("Date"=seqdate,"Np"=seqnombre)
+       tablefin=bind_rows(tablefin,df_inter)
+     }
+     #on crée un tableau pour les deux derniers jours 
+     df_nd=data.frame("Date"=c(max(df_inter$Date)+1,max(df_inter$Date)+2),"Np"=rep(df_inter$Np[length(df_inter$Np)],2))
+     table_final=bind_rows(tablefin,df_nd)
+     table_final
+   }
+
+
+
+#Fonction qui rajoute au tableau précédent les infos de chargement (en poules/ha) et les dates d'abattage 
+  z<-function(date_abattage1,date_abattage2,date_abattage3,tabledit1,tabledit2,tabledit3){
+   
+    #Dates d'abattage
+    date_abattage<-c(date_abattage1,date_abattage2,date_abattage3)
+    
+    tableauini<-tab_trans(tabledit1,tabledit2,tabledit3)
+    table_seq_date<-transform(tableauini,Np = as.numeric(Np))
+    table_seq_date$Chargement=table_seq_date$Np*c_charg_nombre
+  
+    
+   #on remplit vecteur de dates abattages
+    vec_dates_abattage=rep(0,length(table_seq_date$Date))
+    for (i in (1:length(table_seq_date$Date))){
+      if (as.Date(table_seq_date$Date[i])%in%as.Date(date_abattage)){
+       vec_dates_abattage[i]=1
+    }}
+    table_seq_datefin=cbind(table_seq_date,"D_abattage"=vec_dates_abattage)
+
+    data.frame(table_seq_datefin)
+    
+  }
+  
+
+  
+  ##########################   FAUCHES   ##########################
+
+###Fonction qui prend les dates de fauches en entrées et fait un tableau de dates de fauche
+#attention la date de fauche est définie 
+  f<-function(dates_fauche){
+    #on définit la date de début de la simulation en nombre
+    d_ini=as.numeric(date_ini)
+    #on regarde le nombre de jours écoulés entre la date ini et les jours de fauche
+    #vector_fauche=(c(as.numeric(as.Date(input$fauche1)),as.numeric(as.Date(input$fauche2)),as.numeric(as.Date(input$fauche3)),as.numeric(as.Date(input$fauche4)),as.numeric(as.Date(input$fauche5)),as.numeric(as.Date(input$fauche6)),as.numeric(as.Date(input$fauche7)),as.numeric(as.Date(input$fauche8)),as.numeric(as.Date(input$fauche9)))-d_ini)
+    vector_fauche=(c(as.numeric(as.Date(dates_fauche,format="%d/%m/%Y")))-d_ini)
+    vector_fauche
+    }
+
+
+  
+```
+
+
+
+
+```{r, echo=FALSE}
+
+#Fonctions intermédiaires pour réaliser les tracés de courbe
+
+  
+  ##########################  MODELE SOL NU   ##########################
+  
+  
+sol_nu<-function(tableau_z){
+
+    tableau_chargement=tableau_z%>%
+      select(-c(Np,D_abattage))
+    
+    #chargement_hiver=subset(tableau_chargement,Date>as.Date("2021-11-01")&Date<as.Date("2022-03-15"))
+    solnuplot<-zones_SN(tableau_chargement,SNini,par_SN)
+    return(solnuplot)
+}
+  
+  
+  
+
+###MODELE CYDIA POMONELLA : ATTENTION NE REAGIT QUE SI LA CASE RAVAGEURS EST COCHEE !!!!"input.Rav==1"
+  
+  cydia<-function(tableau_z,dates_treatment){
+    
+    max=as.integer(max(year_DD_2022))
+    chargement_hens=tableau_z%>%
+      select(-c(Np,D_abattage))
+    
+    date_treatment=as.Date(dates_treatment,format="%d/%m/%Y")
+    #t0 : 1st november 2022 : want to know the date of treatments from the origin
+    days_treatment=data.frame(as.integer(as.vector(difftime(date_treatment,date_ini_sim_treat, units = c("days")))))
+    colnames(days_treatment)<-"Diffdays"
+    #days_treatment_int=lapply(days_treatment,function(x){as.integer(x)})
+    
+    old=treatments_oldLg(days_treatment$Diffdays,year_DD_2022,mort_CpV_max)
+    
+    new=treatments_newLg(days_treatment$Diffdays,year_DD_2022,mort_CpV_max)
+    
+    impact_poultry_vector_summer_DD=i_hens_summer_DD(chargement_hens$Chargement,year_DD_2022,alpha,t_harvest_n_1)
+    #impact of poultry between the harvest and the 21st march : decrease the mortality of codling moth
+    
+    
+    m0=m0nat-i_hens_winter_DD(chargement_hens$Chargement,date_impact_julian,neta,t_harvest_n_1)
+  
+    if (m0<0){m0=0}
+    
+    #essai=simul_fct(S0_ini,year_DD_2022,chargement_hens$Np,days_treatment$Diffdays,t_harvest,t_harvest_n_1)
+    #length( i_hens_summer_DD(chargement_hens$Np,year_DD_2022,3,t_harvest_n_1))
+ 
+    essai=Pop_cd(S0_ini,m0)
+    
+    for (i in 1:max){
+      essai$emerging_proba(i)}
+    
+    for (i in 1:max){
+      essai$population_larvae_diapausis_ini(i,year_DD_2022)}
+
+    for (i in 1:max){
+      essai$survival_proba(i)}
+    
+    for (i in 1:max){
+      essai$population_Ag1(i)}
+
+    for (i in 1:max){
+      essai$oviposition_vector(i,net_g1,net_g2,net_recolte)}
+    
+    for (i in 1:max){
+      essai$development_vector(i)}
+
+    for (i in 1:max){
+      essai$population_Eg1(i)}
+    
+    for (i in 1:max){
+      essai$population_Lg1(i,new,old,year_DD_2022,impact_poultry_vector_summer_DD)}
+    
+    for (i in 1:max){ essai$population_Ag2(i)}
+    
+    for (i in 1:max){ essai$population_Eg2(i)}
+    
+    for (i in 1:max){
+      essai$population_Lg2(i,new,old,year_DD_2022,impact_poultry_vector_summer_DD)}
+
+    for (i in 1:max){ essai$population_Ag3(i)}
+    
+    for (i in 1:max){ essai$population_Eg3(i)}
+    for (i in 1:max){essai$population_Lg3(i,new,old,year_DD_2022,impact_poultry_vector_summer_DD)}
+    
+    essai$population_Ag_julian(year_DD_2022)
+    essai$new_Lg_tot(year_DD_2022)
+    damages_tot=damages_mic(essai$newLg_tot_cum,year_DD_2022,t_g1,t_harvest,t_harvest_n_1)
+    unlist(damages_tot)
+ 
+  print(damages_tot)
+  }
+ 
+    
+  ##########################  MODELE ECONOMIQUE   ##########################
+ 
+
+  ###Modèle économique
+  eco<-function(tableau_z,dates_treatment,poulailler,strategie_alim,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP){
+    #données de chargement poules : 
+    tableau_poules=tableau_z
+    #dates abattages sous un format correspondant aux besoins de la fonction model_eco
+    index_abat=which(tableau_poules$D_abattage==1)
+    dates_abatt=tableau_poules$Date[index_abat]
+    
+    #on a seulement besoin du tableau avec le nombre de poules dans la parcelle et de la date
+    infos_poules<-tableau_poules%>%
+      select(c(Date,Np))
+    
+    #poulailler et alimentation
+    poul=poulailler
+    if (poul=="Mobile acheté"){poul="Mobile achete"}
+    if (poul=="Mobile bricolé"){poul="Mobile bricole"}
+    if (poul=="Fixe acheté"){poul="Fixe achete"}
+    if (poul=="Fixe bricolé"){poul="Fixe bricole"}
+
+    strat_alim=strategie_alim
+    lumiere=as.numeric(lumiere)
+    
+    #dates de fauches 
+    d_fauches=as.Date(dates_fauche,format="%d/%m/%Y")
+
+    #dates de fertilisation
+    d_ferti<-as.Date(dates_ferti,format="%d/%m/%Y")
+
+    #dates de phyto carpocapse
+    d_phyto_c=as.Date(dates_treatment,format="%d/%m/%Y")
+
+
+    #date de phyto pt
+    d_phyto_pt=as.Date(dates_phyto_pt)
+    
+
+    #comm des fruits
+    sys_comm_fruits=systeme_comm_fruits
+    if (systeme_comm_fruits=="Marché"){sys_comm_fruits="Marche"}
+
+    #comm des oeufs
+    if(systeme_comm_oeufs=="Intégré"){sys_comm_oeufs="Integre"}
+    if(systeme_comm_oeufs=="Non intégré"){sys_comm_oeufs="Non integre"}
+
+
+    #commercialisation supplémentaire
+    if (comm_sup==1|systeme_comm_oeufs=="Non intégré"){sys_comm_supp=systeme_comm_supp
+    }else{
+      sys_comm_supp=""}
+    
+    if (sys_comm_supp=="Par un intermédiaire"){sys_comm_supp="Intermediaire"}
+    if (sys_comm_supp=="Bouche-à-oreille"){sys_comm_supp="Boucheoreille"}
+    if (sys_comm_supp=="Marché"){sys_comm_supp="Marche"}
+    
+    
+    ETP=ETP
+
+    if (embauche==1){d_embauche=dates_embauche
+    }else{d_embauche=c()}
+    
+    FP=cydia(tableau_z,dates_treatment)[[2]]
+    #main d'oeuvre supplémentaire
+    result_eco=model_eco(infos_poules,dates_abatt,poul,strat_alim,d_fauches,d_ferti,d_phyto_c,d_phyto_pt,sys_comm_fruits,sys_comm_oeufs,sys_comm_supp,ETP,d_embauche,lumiere,FP,nAMAP)
+
+
+    #dates de fauche ini
+    #model_eco<-function(np_instantane_verger,dates_abattage,poulailler,strategie_alim,dates_fauche,dates_fauche_ini,dates_ferti,dates_phyto_c,dates_phyto_pt,systeme_comm_fruits,systeme_comm_oeufs,systeme_comm_supp,main_oeuvre)
+    #model_eco<-function(tableau_poules$Np,dates_abatt,input$poulailler,input$strat_alim,d_fauches,delta_ferti,delta_phyto,systeme_comm_fruits,systeme_comm_oeufs,systeme_comm_supp,main_oeuvre)
+    data.frame(result_eco)
+
+  }
+  
+ 
+
+##########################  MODELE TEMPS   ##########################
+  
+  
+  temps<-function(tableau_z,dates_treatment,poulailler,strategie_alim,strategie_loc,freq_dplt,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP){
+    #données de chargement poules : 
+    tableau_poules=tableau_z
+    #dates abattages sous un format correspondant aux besoins de la fonction model_eco
+    index_abat=which(tableau_poules$D_abattage==1)
+    dates_abatt=tableau_poules$Date[index_abat]
+    
+   
+    #on a seulement besoin du tableau avec le nombre de poules dans la parcelle et de la date
+    infos_poules<-tableau_poules%>%
+      select(c(Date,Np))
+    #date_min=tableau_poules$Date[1]
+    #date_max=max(tableau_poules$Date)
+    #poulailler, stratégie de localisaton et alimentation
+    poul=poulailler
+    
+    if (poul=="Mobile acheté"){poul="Mobile achete"}
+    if (poul=="Mobile bricolé"){poul="Mobile bricole"}
+    if (poul=="Fixe acheté"){poul="Fixe achete"}
+    if (poul=="Fixe bricolé"){poul="Fixe bricole"}
+    
+    
+    strat_alim=strategie_alim
+    strat_loc=strategie_loc
+    lumiere=as.numeric(lumiere)
+    
+    #dep=deplact_pm(tableau_poules$Np,"Mobile acheté",,3,"Verger",4)
+    
+    #dates de fauches 
+    d_fauches=as.Date(dates_fauche,format="%d/%m/%Y")
+    
+  
+    
+    #dates de phyto carpocapse
+    d_phyto_c=as.Date(dates_treatment,format="%d/%m/%Y")
+    
+    
+    
+   
+    
+    #comm des fruits
+    sys_comm_fruits=systeme_comm_fruits
+    if (sys_comm_fruits=="Marché"){sys_comm_fruits="Marche"}
+    #comm des oeufs
+    if(systeme_comm_oeufs=="Intégré"){sys_comm_oeufs="Integre"}
+    if(systeme_comm_oeufs=="Non intégré"){sys_comm_oeufs="Non integre"}
+    
+    #commercialisation supplémentaire
+    if (comm_sup==1|systeme_comm_oeufs=='Non intégré'){sys_comm_supp=systeme_comm_supp
+    }else{
+      sys_comm_supp=""}
+    
+    if (sys_comm_supp=="Par un intermédiaire"){sys_comm_supp="Intermediaire"}
+    if (sys_comm_supp=="Bouche-à-oreille"){sys_comm_supp="Boucheoreille"}
+    if (sys_comm_supp=="Marché"){sys_comm_supp="Marche"}
+    
+    ETP=ETP
+    #main d'oeuvre supplémentaire
+    if (embauche==1){d_embauche=dates_embauche
+    }else{d_embauche=c()}
+    
+    
+    #résultats de temps de travail
+    result_temps=model_Temps_W(infos_poules,dates_abatt,poul,strat_alim,strat_loc,freq_dplt,d_fauches,dates_ferti,d_phyto_c,dates_phyto_pt,sys_comm_fruits,sys_comm_oeufs,sys_comm_supp,ETP,d_embauche,lumiere,date_min,date_max,nAMAP)
+
+    vecteur_semaine=seq(date_min,date_max-2,by="weeks")
+    #somme du temps de travail
+    temps_tot=sum(result_temps)
+    
+    #dates de fauche ini
+    #model_eco<-function(np_instantane_verger,dates_abattage,poulailler,strategie_alim,dates_fauche,dates_fauche_ini,dates_ferti,dates_phyto_c,dates_phyto_pt,systeme_comm_fruits,systeme_comm_oeufs,systeme_comm_supp,main_oeuvre)
+    #model_eco<-function(tableau_poules$Np,dates_abatt,input$poulailler,input$strat_alim,d_fauches,delta_ferti,delta_phyto,systeme_comm_fruits,systeme_comm_oeufs,systeme_comm_supp,main_oeuvre)
+    resultats_tot_t_w=list("Temps de travail total"=temps_tot,"Temps de travail hebdomadaire"=data.frame("Semaine"=vecteur_semaine,"Temps"=result_temps))
+    resultats_tot_t_w
+  }
+  
+  
+  
+temps_detail<-function(tableau_z,dates_treatment,poulailler,strategie_alim,strategie_loc,freq_dplt,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP){
+    #données de chargement poules : 
+    tableau_poules=tableau_z
+    #dates abattages sous un format correspondant aux besoins de la fonction model_eco
+    index_abat=which(tableau_poules$D_abattage==1)
+    dates_abatt=tableau_poules$Date[index_abat]
+    
+   
+    #on a seulement besoin du tableau avec le nombre de poules dans la parcelle et de la date
+    infos_poules<-tableau_poules%>%
+      select(c(Date,Np))
+    #date_min=tableau_poules$Date[1]
+    #date_max=max(tableau_poules$Date)
+    #poulailler, stratégie de localisaton et alimentation
+    poul=poulailler
+    
+    if (poul=="Mobile acheté"){poul="Mobile achete"}
+    if (poul=="Mobile bricolé"){poul="Mobile bricole"}
+    if (poul=="Fixe acheté"){poul="Fixe achete"}
+    if (poul=="Fixe bricolé"){poul="Fixe bricole"}
+    
+    
+    strat_alim=strategie_alim
+    strat_loc=strategie_loc
+    lumiere=as.numeric(lumiere)
+    
+    #dep=deplact_pm(tableau_poules$Np,"Mobile acheté",,3,"Verger",4)
+    
+    #dates de fauches 
+    d_fauches=as.Date(dates_fauche,format="%d/%m/%Y")
+    
+  
+    
+    #dates de phyto carpocapse
+    d_phyto_c=as.Date(dates_treatment,format="%d/%m/%Y")
+    
+    
+    
+   
+    
+    #comm des fruits
+    sys_comm_fruits=systeme_comm_fruits
+    if (sys_comm_fruits=="Marché"){sys_comm_fruits="Marche"}
+    #comm des oeufs
+    if(systeme_comm_oeufs=="Intégré"){sys_comm_oeufs="Integre"}
+    if(systeme_comm_oeufs=="Non intégré"){sys_comm_oeufs="Non integre"}
+    
+    #commercialisation supplémentaire
+    if (comm_sup==1|systeme_comm_oeufs=='Non intégré'){sys_comm_supp=systeme_comm_supp
+    }else{
+      sys_comm_supp=""}
+    
+    if (sys_comm_supp=="Par un intermédiaire"){sys_comm_supp="Intermediaire"}
+    if (sys_comm_supp=="Bouche-à-oreille"){sys_comm_supp="Boucheoreille"}
+    if (sys_comm_supp=="Marché"){sys_comm_supp="Marche"}
+    
+    ETP=ETP
+    #main d'oeuvre supplémentaire
+    if (embauche==1){d_embauche=dates_embauche
+    }else{d_embauche=c()}
+    
+    
+    #résultats de temps de travail
+    result_temps=model_Temps_W_detail(infos_poules,dates_abatt,poul,strat_alim,strat_loc,freq_dplt,d_fauches,dates_ferti,d_phyto_c,dates_phyto_pt,sys_comm_fruits,sys_comm_oeufs,sys_comm_supp,ETP,d_embauche,lumiere,date_min,date_max,nAMAP)
+
+    vecteur_semaine=seq(date_min,date_max-2,by="weeks")
+    #somme du temps de travail
+    
+    temps_tot=sum(result_temps[,1]+result_temps[,2]+result_temps[,3]+result_temps[,4]+result_temps[,5]-result_temps[,6])
+    result_postes_travail=colSums(result_temps)
+    
+    result_temps_semaine=rowSums(result_temps)
+    
+    resultats_tot_t_w=list("Temps de travail total"=temps_tot,"Poste de travail"=result_postes_travail,"Temps de travail hebdomadaire"=data.frame("Semaine"=vecteur_semaine,"Temps"=result_temps_semaine))
+    resultats_tot_t_w
+  }
+
+
+ ##########################  MODELE OEUFS   ##########################
+  
+    
+  #####information sur les oeufs vendus et disponibles 
+  oeufs<-function(tableau_z,strategie_alim,strategie_loc,lumiere,systeme_comm_fruits,systeme_comm_oeufs,systeme_comm_supp,comm_sup,nAMAP){
+    #données de chargement poules : 
+    tableau_poules=tableau_z
+    #dates abattages sous un format correspondant aux besoins de la fonction model_eco
+    index_abat=which(tableau_poules$D_abattage==1)
+    dates_abatt=tableau_poules$Date[index_abat]
+    
+    
+    #on a seulement besoin du tableau avec le nombre de poules dans la parcelle et de la date
+    infos_poules<-tableau_poules%>%
+      select(c(Date,Np))
+    
+    strat_alim=strategie_alim
+    strat_loc=strategie_loc
+    lumiere=as.numeric(lumiere)
+    sys_comm_fruits=systeme_comm_fruits
+    if (sys_comm_fruits=="Marché"){sys_comm_fruits="Marche"}
+    
+    #comm des oeufs
+    if(systeme_comm_oeufs=="Intégré"){sys_comm_oeufs="Integre"}
+    if(systeme_comm_oeufs=="Non intégré"){sys_comm_oeufs="Non integre"}
+    
+    #commercialisation supplémentaire
+    if (comm_sup==1|systeme_comm_oeufs=='Non intégré'){sys_comm_supp=systeme_comm_supp
+    }else{
+      sys_comm_supp=""}
+    
+    if (sys_comm_supp=="Par un intermédiaire"){sys_comm_supp="Intermediaire"}
+    if (sys_comm_supp=="Bouche-à-oreille"){sys_comm_supp="Boucheoreille"}
+    if (sys_comm_supp=="Marché"){sys_comm_supp="Marche"}
+    
+    df_oeufs=oeufs_tot(infos_poules,dates_abatt,strat_alim,sys_comm_fruits,sys_comm_oeufs,sys_comm_supp,lumiere,nAMAP)
+    return(df_oeufs)
+    
+  }
+  
+  
+  
+  
+  
+
+```
+
+
+
+```{r,echo=FALSE}
+
+#Execution des fonctions précédentes : 
+
+TAB_Z=z(input$dabattage1,input$dabattage2,input$dabattage3,tabledit1$data,tabledit2$data,tabledit3$data)
+
+
+```
+
+
+```{r,echo=FALSE}
+###############FONCTION POUR TRACER LES GRAPHIQUES ###############
+
+#############################################FONCTIONS POUR ENHERBEMENT#############################################
+#######FONCTIONS QUI TRACE UN GRAPH AVEC LE NOMBRE DE POULES ET LES DATES DE FAUCHE
+
+infos_fauche<-function(tableau_z,dates_fauche){
+    df_infos_poules=tableau_z
+    # plot1<-ggplot(df_infos_poules)+geom_step(aes(Date,Chargement))+ggtitle("")
+    
+    plot1<-ggplot(df_infos_poules)+geom_step(aes(as.numeric(Date),Chargement))+ggtitle("")
+    
+    d_fauches=as.numeric(as.Date(dates_fauche,format="%d/%m/%Y"))
+    
+    #df_symbol=data.frame("Dfauches"=as.POSIXct(as.Date(d_fauches,format="%d/%m/%Y"),tz="UTC",format="%Y-%m-%d"),"Symbole"=rep(1,length(d_fauches)))
+    df_symbol=data.frame("Dfauches"=d_fauches,"Symbole"=rep(1,length(d_fauches)))
+    loc_y_symb=max(df_infos_poules$Chargement)
+    #with symbols corresponding to fauche
+    plot2<-plot1+geom_point(data=df_symbol,aes(Dfauches,Symbole*loc_y_symb),shape=25,fill="red",size=5)+scale_y_continuous(position="right",limits=c(0,NA))+xlab("Date")
+
+    #plot2<-plot1+geom_point(data=df_symbol,aes(as.Date(Dfauches),Symbole*loc_y_symb),shape=25,fill="red",size=5)+ylim(0,NA)+xlim(date_min,date_max)+theme_bw()
+    #+theme(axis.line.x = element_blank(),axis.ticks.x = element_blank(),axis.text.x = element_blank(),axis.title.x = element_blank())
+ 
+    if(input$Enh==TRUE){return(plot2)}
+}
+#+ylim(date_min,date_max)
+
+#Sortie de la fonction qui sort le tracé de la hauteur d'herbe en fonction du temps 
+  
+  tracer_hauteur<-function(tableau_z,parametres_herbes,inc_value,dates_fauche){
+
+    #Jours correspondant aux fauches initiales
+    vec_fauche=f(dates_fauche)
+    hauteur_fauche=input$hfauche
+    
+    #Tableau de chargement : Date et chargement
+    tableau_chargement=tableau_z%>%
+      select(-c(Np,D_abattage))
+    
+    plot_herbe<-plot_bar(parametres_herbes,h0,tableau_chargement,inc_value,cutoff,vec_fauche,hauteur_fauche)+scale_y_continuous(position="right",limits=c(0,80),breaks=c(0,10,20,30,40,50,60,70,80))
+    if(input$Enh==TRUE){return(plot_herbe)}
+  }
+  
+#################################################### SOL NU ####################################################### 
+#Sortie de sol nu
+
+
+percentSN<-function(tableau_z,number_zone){
+    solnu=sol_nu(tableau_z)
+    names(solnu)=c("Zones","Jours")
+    vec=solnu%>%
+      subset(Zones==number_zone)%>%
+      select(Jours)
+    n_days=vec$Jours/136*100
+  
+    
+    if (rlang::is_empty(n_days)){n_days=0}
+    paste0(round(n_days),"% du temps")
+  }
+
+  
+plot_SN<-function(Solnu1,Solnu2,Solnu3,Solnu4){
+  image<-image_read(path ="sol_nu.png")
+  image1<-image_annotate(image,text=Solnu1,location = "+900+200",size=45)
+  image2<-image_annotate(image1,text=Solnu2,location = "+900+550",size=45)
+  image3<-image_annotate(image2,text=Solnu3,location = "+900+950",size=45)
+  image4<-image_annotate(image3,text=Solnu4,location = "+900+1300",size=45)
+  if(input$Enh==TRUE){return(image4)}
+}
+
+
+#############################################FONCTIONS POUR DEGATS CARPO#############################################
+
+  
+damages_count_ini<- function(){
+    #intensité des dommage à la récolte
+    
+    damages_ini=FPini
+    sains_ini=1-damages_ini
+    
+    images<-c(system.file("img", "pommes.jpg", package="ggpattern"))
+    df_damages_ini<-data.frame("Block"=c("ini"),"Min"=c(sains_ini*100),"Max"=c(100))
+
+    plot_damagesini=ggplot(df_damages_ini,aes(x=Block))+geom_bar(aes(y=Max),stat="identity",position="identity",alpha=.5, fill='black', color='black')+geom_bar_pattern(aes(y=Min),stat="identity",position="identity",fill=NA,pattern='image',pattern_type='expand',pattern_filename=images,pattern_orientation='horizontal')+theme_classic()+theme(axis.text.y=element_blank(),axis.line.y=element_blank(),axis.ticks.y=element_blank(),axis.text.x=element_text(size=20),legend.position="none")+xlab(c())+ylab(c())+scale_color_manual(values=c('slategray','grey'))+ scale_y_continuous(breaks = seq(0, 100,50), lim = c(0, 100))+ggtitle("Situation initiale",subtitle = "En gris, le pourcentage de la récolte constitué de fruits piqués")+coord_flip()
+   
+    if(input$Rav==TRUE){return(plot_damagesini)}
+  }
+  
+damages_count<- function(tableau_z,dates_traitement){
+    #intensité des dommage à la récolte
+   
+    #plot corresponding to the intensity of damage at harvest
+    #damages=0.20 
+    damages=unlist(cydia(tableau_z,dates_traitement)[[2]])
+    sains=1-damages
+   
+    
+    images<-c(system.file("img", "pommes.jpg", package="ggpattern"))
+    
+    df_damages<-data.frame("Block"=c("A"),"Min"=c(sains*100),"Max"=c(100))%>%
+      mutate(Min=ifelse(Min==0,0.00001,Min))
+
+   
+    plot_damages2=ggplot(df_damages,aes(x=Block))+geom_bar(aes(y=Max),stat="identity",position="identity",alpha=.5, fill='black', color='black')+geom_bar_pattern(aes(y=Min),stat="identity",position="identity",fill=NA,pattern='image',pattern_type='expand',pattern_filename=images)+theme_classic()+theme(axis.text.y=element_blank(),axis.line.y=element_blank(),axis.ticks.y=element_blank(),axis.text.x=element_text(size=20),legend.position="none")+xlab(c())+ylab(c())+scale_color_manual(values=c('grey','grey'))+ scale_y_continuous(breaks = seq(0, 100,50), lim = c(0, 100))+ggtitle("Situation actuelle avec la stratégie",subtitle = "En gris, le pourcentage de la récolte constitué de fruits piqués")+coord_flip()
+
+    if(input$Rav==TRUE){return(plot_damages2)}
+    }
+  
+  
+
+
+#############################################FONCTIONS POUR ECONOMIQUE#############################################
+
+#fonction pour faire un carré de couleur pour représenter l
+  #fonction pour faire graphique visuel
+eco_visuel<- function(tableau_z,dates_traitement,poulailler,strategie_alim,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP){
+    reco_tot=round(eco(tableau_z,dates_traitement,poulailler,strategie_alim,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP)$Total)
+    coord=data.frame("X"=c(0,0,3,3),"Y"=c(0,1,1,0))
+    #color according to result
+    color=case_when((reco_tot>=seuil_ecomin&reco_tot<=seuil_ecomax)~'slategray',reco_tot<seuil_ecomin~'red',reco_tot>seuil_ecomax~'green4')
+    text=case_when((reco_tot>=seuil_ecomin&reco_tot<=seuil_ecomax)~"Peu ou pas de gains supplémentaires",reco_tot<seuil_ecomin~"Pertes économiques",reco_tot>seuil_ecomax~"Gains économiques")
+    
+    box_resulteco=ggplot(coord)+geom_polygon(aes(X,Y),color=color,fill=color)+theme(panel.background = element_blank())+
+      theme(axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())+xlab(c())+ylab(c())+ggtitle("")+geom_label(aes(x=1.5,y=0.5,label=paste0(text)),color="white",fill=color,size=7)
+  
+    if(input$Eco==TRUE){return(box_resulteco)}
+    
+  }
+
+
+#fonction pour faire un camembert
+  #fonction pour faire graphique visuel
+
+
+eco_poste<- function(tableau_z,dates_traitement,poulailler,strategie_alim,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP){
+    reco_poste=eco(tableau_z,dates_traitement,poulailler,strategie_alim,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP)
+    #mettre cout CEO si jamais a été incorporé dans le bénéfice commercialisation 
+    if (reco_poste$C_CEOsupp==0&systeme_comm_supp=="Par un intermédiaire"){
+    reco_poste$C_CEOsupp=C_CEO/Amort_CEO
+    reco_poste$Benefices=reco_poste$Benefices+C_CEO/Amort_CEO}
+    
+    size=ncol(reco_poste)
+    somme=reco_poste$Total
+  
+    
+    
+    noms=c("Bénéfices commerciaux","Perte de récolte","Surcoût d'interventions","Aliment","CEO","ETP","Infrastructures","Achat poulettes","Vétérinaire","Vide sanitaire")
+    #on change les noms si économie ou perte
+    
+    if(reco_poste$Benefpertes_Recolte<0){noms[2]="Récolte supplémentaire"}
+    if(reco_poste$Benefprix_interventions<0){noms[3]="Economie sur les interventions"}
+    
+    df_postes_eco=data.frame("Poste"=names(reco_poste)[2:size],"Percent"=unlist(reco_poste[2:size]),"Gains"=c(1,0,0,0,0,0,0,0,0,0),"Noms"=noms)
+    rownames(df_postes_eco)=NULL
+    
+    df_postes_eco=df_postes_eco%>%
+      filter(Percent!=0)
+    # "Total"=round(Ctot),"Benefices"=benef_comm+Benef_tot_abattage,"C_infrastruct"=Ctot_infrastructures,"C_CEOsupp"=C_comm_CEOsupp,"C_poul"=Ctot_poul,"C_aliment"=Ctot_aliment,"C_veto"=Ctot_veto,"C_interventions"=Ctot_interventions,"C_videsan"=Ctot_vide,"Recolte"=gains_FS
+    
+    
+    #selon les cas, Cinterventions plutôt une économie ou bien une perte et de même pour gain_FS
+    indices=which(df_postes_eco$Percent<0)
+    df_postes_eco$Gains[indices]=1
+    df_postes_eco$Percent[indices]=-df_postes_eco$Percent[indices]
+    ngains=sum(df_postes_eco$Gains)
+    npertes=nrow(df_postes_eco)-ngains
+    indice_recolte=which(df_postes_eco$Poste=="Benefpertes_Recolte")
+    
+    df_postes_ecof=arrange(df_postes_eco,desc(Gains))
+    
+    palette_red=rev(brewer.pal(n = 9, name = "YlOrBr"))[2:(npertes+1)]
+    palette_green=brewer.pal(n = 6, name = "Greens")[4:(ngains+3)]
+    
+    #on cherche à extraire les deux légendes 
+    
+    #Légende des bénéfices
+    data_split_1=df_postes_ecof[df_postes_ecof$Gains==1,]
+    plot_data_split_1<-ggplot(data_split_1)+geom_bar(aes(x = "", y = Percent, fill = Poste),width = 1, stat = "identity", color = "white")+coord_polar("y", start = 0) +theme(legend.position="right",text = element_text(size=10),plot.margin=margin(t=-2,r=-500,b=-2,l=-5))+scale_fill_manual(values=c(palette_green),labels=data_split_1$Noms)+labs(fill='Gains')
+    
+    legend_1=get_legend(plot_data_split_1)
+    
+    #Légende des coûts 
+    data_split_2=df_postes_ecof[df_postes_ecof$Gains==0,]
+    plot_data_split_2<-ggplot(data_split_2)+geom_bar(aes(x = "", y = Percent, fill = Poste),width = 1, stat = "identity", color = "white")+coord_polar("y", start = 0) +theme(legend.position="right",text = element_text(size=10),plot.margin=margin(t=-2,r=-5,b=-2,l=-500))+scale_fill_manual(values=c(palette_red),labels=data_split_2$Noms)+labs(fill='Charges et investissements')
+    
+    
+   legend_2=get_legend(plot_data_split_2)
+
+   #total plot of couts and bénéfices
+  plot_tot<-ggplot(df_postes_ecof)+geom_bar(aes(x = "", y =Percent, fill = reorder(Poste,desc(Gains))),width = 1, stat = "identity", color = "white")+coord_polar("y", start = 0) +theme_void()+scale_fill_manual(values=c(palette_green,palette_red),)+theme(legend.position = "none",plot.margin=margin(t=0,r=0,b=-5,l=0))
+  
+     
+  plot_legend=plot_grid(c(),legend_1,legend_2,ncol=4,rel_widths = c(0.5,1,1,0.5))+theme(plot.margin=margin(t=0,r=0,b=10,l=0))
+  
+  plot_cam_eco=plot_grid(plot_tot,plot_legend,nrow = 2,rel_heights  = c(2,1))
+   
+    if(input$Eco==TRUE){return(plot_cam_eco)}
+    
+  }
+
+
+
+
+
+#Courbes de pontes et de vente d'oeufs
+Oeufs_plot<-function(tableau_z,strategie_alim,strategie_loc,lumiere,systeme_comm_fruits,systeme_comm_oeufs,systeme_comm_supp,comm_sup,nAMAP){
+    df_oeufs=oeufs(tableau_z,strategie_alim,strategie_loc,lumiere,systeme_comm_fruits,systeme_comm_oeufs,systeme_comm_supp,comm_sup,nAMAP)%>%
+      mutate("Boitepond"=floor(Oeufs.pondus/6),"Boitevendues"=floor(Oeufs.vendus/6))
+    
+    df_oeufs$Date=first_days_week
+    boite<-c(system.file("img", "eggs_boitemin.png", package="ggpattern"))
+    #contour du ruban pour afficher les oeufs perdus
+    rubbon_lost<-data.frame("Date"=first_days_week,"Down"=df_oeufs$Boitevendues,"Up"=df_oeufs$Boitepond)
+    
+    #contour du ruban pour afficher les oeufs perdus
+    rubbon_sold<-data.frame("Date"=first_days_week,"Down"=0,"Up"=df_oeufs$Boitevendues)
+    
+    #coordonnees pour écrire dans la partie rouge :
+    if (TRUE%in%(rubbon_lost$Up>rubbon_lost$Down)){Text="Boites non vendues"
+    l=length(rubbon_lost$Up>rubbon_lost$Down)
+    coord_y=(rubbon_lost$Up[l/2]-rubbon_lost$Down[l/2])/2+rubbon_lost$Down[l/2]
+    coord_x=rubbon_lost$Date[l/2]
+    }else{Text=c()
+    coord_y=0
+    coord_x=as.Date("2022-02-02")}
+    
+    coord_line=0
+    #si AMAP, mettre la demande minimale : ligne
+    if(systeme_comm_fruits=="AMAP"|systeme_comm_oeufs=="Intégré"){coord_line=nAMAP*CAPamap}
+    
+    plot_oeufs=ggplot(df_oeufs)+geom_area_pattern(aes(Date,Boitepond),fill='transparent',pattern='image',pattern_type='tile',pattern_filename=boite)+theme_bw()+geom_ribbon(data=rubbon_lost,aes(x=Date,ymin=Down,ymax=Up),fill='firebrick',alpha=0.5,color='firebrick')+annotate("label",x=coord_x,y=coord_y,label=Text,fill='firebrick',color="white",size=5,alpha=0.8)+ylab("Nombre de boites d'oeufs produites")+geom_ribbon(data=rubbon_sold,aes(x=Date,ymin=Down,ymax=Up),fill='palegreen1',alpha=0.3,color='palegreen1')+geom_hline(yintercept = coord_line,size=1)+geom_text(x=date_min+50,y=coord_line*1.10,label="Demande minimale")
+    if(input$Eco==TRUE){return(plot_oeufs)}
+
+  }
+
+
+
+
+#############################################FONCTIONS POUR TEMPS#############################################
+  
+
+temps_visuel<-function(tableau_z,dates_traitement,poulailler,strategie_alim,strategie_loc,freq_deplact,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP){
+  
+    rt_tot=temps_detail(tableau_z,dates_traitement,poulailler,strategie_alim,strategie_loc,freq_deplact,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP)[[1]]
+    coord=data.frame("X"=c(0,0,3,3),"Y"=c(0,1,1,0))
+    #color according to result
+    #color=case_when((rt_tot>=seuil_tmin&rt_tot<=seuil_tmax)~'slategray',rt_tot<seuil_tmin~'green4',rt_tot>seuil_tmax~'red')
+    #color="slategray"
+    text=case_when(rt_tot<seuil_t0~"Diminution de la charge de travail",(rt_tot>=seuil_t0&rt_tot<seuil_t1)~"Entre 0 et 2h de plus par semaine",(rt_tot>=seuil_t1&rt_tot<seuil_t2)~"Entre 2h et 8h de plus par semaine",(rt_tot>=seuil_t2&rt_tot<seuil_t3)~"Entre 8h et 16h de plus par semaine",rt_tot>=seuil_t3~"Plus de 15h de plus par semaine")
+    
+    
+    # box_result=ggplot(coord)+geom_polygon(aes(X,Y),color=c('slategray'),fill=c('slategray'))+theme(panel.background = element_blank())+
+    # theme(axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())+xlab(c())+ylab(c())+ggtitle("")+geom_label(aes(x=1.5,y=0.5,label=paste0(text)),color="black",fill=c('slategray'),size=7)
+
+    box_result=ggplot(coord)+geom_polygon(aes(X,Y),fill=c('slategray'))+theme(panel.background = element_blank())+
+    theme(axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())+xlab(c())+ylab(c())+  ggtitle("")+geom_label(aes(x=1.5,y=0.5,label=paste0(text)),color="white",fill=c('slategray'),size=7)
+    
+    if(input$Tps==TRUE){return(box_result)}
+  }
+
+#fonction pour tracer temps de travail hebdomadaire
+temps_hebdo<- function(tableau_z,dates_traitement,poulailler,strategie_alim,strategie_loc,freq_deplact,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP){
+    df_t_hebdo=data.frame(temps(tableau_z,dates_traitement,poulailler,strategie_alim,strategie_loc,freq_deplact,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP)[[2]])
+    #color according to result
+
+    plot_t_hebdo=ggplot(df_t_hebdo)+geom_step(aes(Semaine,Temps))+theme_bw()+theme(text = element_text(size = 20))+ylab("Surplus de travail (en h/semaine)")
+    
+    if(input$Tps==TRUE){return(plot_t_hebdo)}
+  }
+  
+  
+#fonction pour tracer temps de travail par poste 
+temps_poste<-function(tableau_z,dates_traitement,poulailler,strategie_alim,strategie_loc,freq_deplact,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP){
+  rt_postes=temps_detail(tableau_z,dates_traitement,poulailler,strategie_alim,strategie_loc,freq_deplact,lumiere,dates_fauche,systeme_comm_fruits,systeme_comm_oeufs,comm_sup,systeme_comm_supp,ETP,embauche,dates_embauche,nAMAP)[[2]]
+  somme=sum(rt_postes)
+  if (somme==0){somme=1}
+  names(rt_postes)=c("Entretiens infrastructures","Déplacement du poulailler","Elevage","Interventions au verger supplémentaire","Commercialisation","Embauche")
+  df_postes=data.frame("Poste"=names(rt_postes),"Percent"=rt_postes/somme)%>%
+    subset(Poste!="Embauche")%>%
+    filter(Percent>0)
+
+
+  plot_cam<-ggplot(df_postes, aes(x = "", y = Percent, fill = Poste))+geom_bar(width = 1, stat = "identity", color = "white") +coord_polar("y", start = 0)+
+  theme_void()
+  
+
+  if(input$Tps==TRUE){return(plot_cam)}
+}
+
+
+
+infos_interventions<-function(tableau_z,dates_fauche,dates_phyto_c,dates_phyto_pt,strategie_loc,sys_comm_fruits,sys_comm_oeufs,sys_comm_supp,comm_sup){
+ 
+   #dates abattages sous un format correspondant aux besoins de la fonction model_eco
+    index_abat=which(tableau_z$D_abattage==1)
+    dates_abatt=tableau_z$Date[index_abat]
+    
+    infos_poules<-tableau_z%>%
+      select(c(Date,Np))
+    
+    df_infos_poules=nombre_poules_exploit(infos_poules,dates_abatt)
+    df_infos_p=df_infos_poules[[1]]
+
+    maxNp=max(df_infos_p$Np)
+    
+    #localisation du poulailler : dans le verger
+    date_entree=date_min
+    date_sortie=date_max
+    date_entree2=date_sortievg
+    date_sortie2=date_entreevg
+    
+    poules_vgperiode1=1
+    poules_vgperiode2=0
+    
+    if (strategie_loc=="Hors_verger"){
+    poules_vgperiode1=-15
+    poules_vgperiode2=-15
+    }
+    
+    if (strategie_loc=="Mixte"){
+    poules_vgperiode1=1
+    poules_vgperiode2=1}
+   
+    marche=0
+    
+     if (comm_sup==1|sys_comm_oeufs=='Non intégré'){sys_comm_supp=sys_comm_supp
+    }else{
+      sys_comm_supp=""}
+    
+    if (sys_comm_fruits=="Marché"|sys_comm_supp=="Marché"){marche=1}
+    
+    
+    
+    plot1<-ggplot(df_infos_p)+geom_step(aes(Date,Np),linewidth=2)+ggtitle("")+geom_rect(ymin = maxNp*1.20*marche, ymax = maxNp*1.30*marche,xmin = as.Date("2021-12-01"), xmax = as.Date("2022-03-31"), fill = 'black',alpha=0.01)+geom_text(aes(x=as.Date("2021-12-01")+50,y=maxNp*1.25*marche,label="Pas de marché"),color="white")+geom_rect(ymin = maxNp*1.10*poules_vgperiode1, ymax = maxNp*1.20*poules_vgperiode1,xmin = date_entree, xmax = date_sortie, fill = 'darkgreen',alpha=0.01)+geom_rect(ymin = maxNp*1.10*poules_vgperiode2, ymax = maxNp*1.20*poules_vgperiode2,xmin = date_entree2, xmax = date_sortie2, fill = 'white',alpha=0.01)+geom_text(aes(x=date_entree+50,y=maxNp*1.15*poules_vgperiode1,label="Poulailler dans le verger"),color="white")
+    
+    
+    d_fauches=as.Date(dates_fauche,format="%d/%m/%Y")
+    d_traitements=c(as.Date(dates_phyto_c,format="%d/%m/%Y"),as.Date(dates_phyto_pt,format="%Y-%m-%d"))
+    
+   
+    df_symbol=data.frame("Date"=c(d_fauches,d_traitements),"Localisation"=c(rep(maxNp*1.50,length(d_fauches)),rep(maxNp*1.40,length(d_traitements))),"Interventions"=c(rep("Fauche",length(d_fauches)),rep("Traitements",length(d_traitements))))
+
+    
+    #with symbols corresponding to fauche
+    plot2<-plot1+geom_point(data=df_symbol,aes(Date,Localisation,shape=Interventions),fill='red',size=6)+scale_shape_manual(values=c(25,21))+scale_y_continuous(position="left",limits=c(0,maxNp*1.55),)+theme_bw()+ylab("Nombre de poules dans l'exploitation")+theme(text =element_text(size=18),legend.position = "top",axis.text.x= element_blank(),axis.ticks.x=element_blank(),axis.title.x = element_blank())
+  return(plot2)
+    if(input$Tps==TRUE){return(plot2)}
+}
+
+
+
+```
+
+# Résultats 
+## Enherbement 
+
+
+```{r,echo=FALSE,fig.height=18,fig.width=12,warning=FALSE}
+#labels=seq(as.Date(date_min),as.Date(date_max),by="days")
+if (input$Enh==TRUE){
+info_h=infos_fauche(TAB_Z,input$d_fauche)+coord_flip()+scale_x_reverse(breaks=c(19000,19100,19200,19300),labels=format(as.Date(c(19000,19100,19200,19300)),"%B %Y"))+theme_bw()+xlab("")+theme(axis.text.y = element_blank(),axis.ticks.y = element_blank(),text=element_text(size=20),axis.text = element_text(angle = -90))+ylab("Nombre de poule")
+
+hauteurs_herbe=tracer_hauteur(TAB_Z,parametres_herbe,inc_value,input$d_fauche)+coord_flip()+scale_x_reverse(breaks=c(19000,19100,19200,19300),labels=format(as.Date(c(19000,19100,19200,19300)),"%B %Y"))+theme(text=element_text(size=20),axis.text = element_text(angle = -90),axis.title.y= element_text(angle=-90),axis.text.x = element_text(colour = c('black','darkgreen',rep('black',7)),face=c("plain","bold",rep("plain",7)),size=c(18,22,rep(18,7))))+ylab("Hauteur d'herbe moyenne dans le verger (en cm)")
+
+
+plot_grid(hauteurs_herbe, info_h, ncol = 2, align = "h",rel_widths = c(3, 1))+ggtitle("Nombre de poules dans la parcelle et dates de fauche (en rouge)")}
+
+
+
+```
+
+## Sol nu 
+```{r,echo=FALSE}
+SN1<-percentSN(TAB_Z,1)
+SN2<-percentSN(TAB_Z,2)
+SN3<-percentSN(TAB_Z,3)
+SN4<-percentSN(TAB_Z,4)
+
+plot_SN(SN1,SN2,SN3,SN4)
+
+```
+
+
+\newpage
+## Dommages carpocapses 
+```{r,echo=FALSE}
+
+damages_count_ini()
+
+damages_count(TAB_Z,input$d_treat)
+```
+
+
+
+\newpage
+## Gestion économique 
+### Résultat économique général
+```{r, echo=FALSE,out.height="50%",out.width="50%",fig.align='center',warning=FALSE}
+
+eco_visuel(TAB_Z,input$d_treat,input$poulailler,input$strat_alim,input$lum,input$d_fauche,input$systeme_comm_fruits,input$systeme_comm_oeufs,input$comm_sup,input$systeme_comm_supp,input$ETP,input$embauche,input$dates_embauche,input$nAMAP)
+
+```
+
+### Résultats économiques par postes 
+```{r, echo=FALSE,out.height="100%",out.width="100%",warning=FALSE}
+
+eco_poste(TAB_Z,input$d_treat,input$poulailler,input$strat_alim,input$lum,input$d_fauche,input$systeme_comm_fruits,input$systeme_comm_oeufs,input$comm_sup,input$systeme_comm_supp,input$ETP,input$embauche,input$dates_embauche,input$nAMAP)
+
+```
+\newpage
+
+### Production et vente d'oeufs  
+```{r, echo=FALSE,warning=FALSE}
+
+Oeufs_plot(TAB_Z,input$strat_alim,input$strat_loc,input$lum,input$systeme_comm_fruits,input$systeme_comm_oeufs,input$systeme_comm_supp,input$comm_sup,input$nAMAP)
+```
+
+\newpage
+## Gestion temps de travail 
+### Résultat temps de travail général
+```{r,echo=FALSE,out.height="50%",out.width="50%",fig.align='center',warning=FALSE}
+temps_visuel(TAB_Z,input$d_treat,input$poulailler,input$strat_alim,input$strat_loc,input$freq_deplact,input$lum,input$d_fauche,input$systeme_comm_fruits,input$systeme_comm_oeufs,input$comm_sup,input$systeme_comm_supp,input$ETP,input$embauche,input$dates_embauche,input$nAMAP)
+
+```
+
+### Résultats de temps de travail par poste 
+
+```{r,echo=FALSE,warning=FALSE}
+
+
+temps_poste(TAB_Z,input$d_treat,input$poulailler,input$strat_alim,input$strat_loc,input$freq_deplact,input$lum,input$d_fauche,input$systeme_comm_fruits,input$systeme_comm_oeufs,input$comm_sup,input$systeme_comm_supp,input$ETP,input$embauche,input$dates_embauche,input$nAMAP)
+
+```
+
+### Résultats de temps de travail par semaine
+
+```{r,echo=FALSE,fig.height=15,fig.width=12,warning=FALSE}
+
+temps_h=temps_hebdo(TAB_Z,input$d_treat,input$poulailler,input$strat_alim,input$strat_loc,input$freq_deplact,input$lum,input$d_fauche,input$systeme_comm_fruits,input$systeme_comm_oeufs,input$comm_sup,input$systeme_comm_supp,input$ETP,input$embauche,input$dates_embauche,input$nAMAP)+xlim(c(date_min,date_max))
+
+
+infos_i=infos_interventions(TAB_Z,input$d_fauche,input$d_treat,dates_phyto_pt_ini,input$strat_loc,input$systeme_comm_fruits,input$systeme_comm_oeufs,input$systeme_comm_supp,input$comm_sup)
+ 
+
+
+
+
+plot_grid(infos_i, temps_h, nrow = 2, align = "v",rel_heights = c(2, 3))
+
+```
+
+
