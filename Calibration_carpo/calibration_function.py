@@ -12,11 +12,11 @@ import pandas as pd
 
 #In this code, we try to calibrate the value of beta. For thus, we simulate populations dynamics. Then, we build a function that makes the link between populations and potential damage and we calibrate it on the result
 ##Files that contains defintion of simulation fonction
-execfile('D:/home/Sara/Modelo/1-Ravageurs/1-Modelisation_carpocapse/4-Simulations/Calibration_effet_poules/simul_fct.py')
+execfile('These/Calibration_carpo/simul_fct.py')
 
 
 ##Files that contains defintion of common parameters
-execfile('D:/home/Sara/Modelo/1-Ravageurs/1-Modelisation_carpocapse/4-Simulations/Calibration_effet_poules/parameters_simulations.py')
+execfile('These/Calibration_carpo/parameters_simulations.py')
 
 
 
@@ -28,9 +28,9 @@ execfile('D:/home/Sara/Modelo/1-Ravageurs/1-Modelisation_carpocapse/4-Simulation
 ################################################################INSIDE THE NET###########################################################################
 
 ##Files that contains parameters for the year 2021
-execfile('D:/home/Sara/Modelo/1-Ravageurs/1-Modelisation_carpocapse/4-Simulations/Calibration_effet_poules/parameters_simulations_2021.py')
+execfile('These/Calibration_carpo/parameters_simulations_2021.py')
 
-execfile('D:/home/Sara/Modelo/1-Ravageurs/1-Modelisation_carpocapse/4-Simulations/Calibration_effet_poules/fruit_parameters_2021.py')
+execfile('These/Calibration_carpo/fruit_parameters_2021.py')
 
 
 ################################################################SOLEOU###################################################################################
@@ -58,7 +58,7 @@ result2021_mt_inside=simul_fct(S0_2021_mt,year_DD_2021_mt,vector_poultry_2021_mt
 #########################################################################################################################################################
 ################################################################OUTSIDE THE NET##########################################################################
 ##Files that contains parameters for the year 2021
-execfile('D:/home/Sara/Modelo/1-Ravageurs/1-Modelisation_carpocapse/4-Simulations/Calibration_effet_poules/parameters_simulations_2021_outsidenet.py')
+execfile('These/Calibration_carpo/parameters_simulations_2021_outsidenet.py')
 
 
 ################################################################SOLEOU###################################################################################
@@ -88,10 +88,10 @@ result2021_mt_outside=simul_fct(S0_2021_mt,year_DD_2021_mt,vector_poultry_2021_m
 ################################################################SIMULATIONS 2022#########################################################################
 #########################################################################################################################################################
 ##Files that contains parameters for the year 2021
-execfile('D:/home/Sara/Modelo/1-Ravageurs/1-Modelisation_carpocapse/4-Simulations/Calibration_effet_poules/parameters_simulations_2022.py')
-execfile('D:/home/Sara/Modelo/1-Ravageurs/1-Modelisation_carpocapse/4-Simulations/Calibration_effet_poules/fruit_parameters_2022.py')
+execfile('These/Calibration_carpo/parameters_simulations_2022.py')
+execfile('These/Calibration_carpo/fruit_parameters_2022.py')
 
-execfile('D:/home/Sara/Modelo/1-Ravageurs/1-Modelisation_carpocapse/4-Simulations/Calibration_effet_poules/fruit_parameters_2022.py')
+execfile('These/Calibration_carpo/fruit_parameters_2022.py')
 
 ################################################################SOLEOU###################################################################################
 #Inoculum
@@ -168,9 +168,9 @@ result2022_dt_inside=simul_fct(S0_2022_dt,year_DD_2022_dt,vector_poultry_2022_dt
 #########################################################################################################################################################
 
 
-execfile('D:/home/Sara/Modelo/1-Ravageurs/1-Modelisation_carpocapse/4-Simulations/Calibration_effet_poules/fruit_parameters_2021.py')
+execfile('These/Calibration_carpo/fruit_parameters_2021.py')
 
-execfile('D:/home/Sara/Modelo/1-Ravageurs/1-Modelisation_carpocapse/4-Simulations/Calibration_effet_poules/fruit_parameters_2022.py')
+execfile('These/Calibration_carpo/fruit_parameters_2022.py')
 
 
 
